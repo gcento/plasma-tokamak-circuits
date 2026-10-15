@@ -36,6 +36,9 @@ function muscle_plasmaless_actor()
 %   'f_init':     F_INIT values win (currents, voltages and the observables
 %                 found there); descriptor values only for what F_INIT does
 %                 not have. The outputs start on the scenario.
+% A descriptor with coordinates 'absolute' (e.g. the circuit model exported as
+% matrices) has no operating point: the run starts from the F_INIT coil currents at t0
+% (passive states 0) and the setting operating_point is ignored.
 % Observables known by neither source stay unknown and are not sent. Each
 % step uses du = V - op.voltage, so the operating point is held until the
 % controller changes the voltages. equilibrium_o_i carries the known
@@ -167,7 +170,21 @@ else
     % and the F_INIT data at t0 (setting operating_point says which wins)
     fprintf('muscle_plasmaless_actor: linear model from %s\n', linear_model_dir);
     [model, x] = configure_linear_model(linear_model_dir, dt, pf_active_md);
-    model = linear_operating_point(model, pfa_t0, eq_ref, eq_time, t0, op_source);
+    if strcmp(model.coordinates,'absolute')
+        % absolute model (descriptor coordinates 'absolute'): zero operating point, the
+        % run starts from the F_INIT coil currents at t0 (one state per coil, checked by
+        % configure_linear_model), passive states 0 as in the circuit model
+        i0 = zeros(model.n_coils,1);
+        for ii = 1:model.n_coils
+            i0(ii) = check_value(pfa_t0.coil{ii}.current.data, ...
+                ['pf_active coil ' model.coil_names{ii} ' current'], t0);
+        end
+        x = model.x_to_coil'*i0;
+        fprintf(['muscle_plasmaless_actor: absolute linear model, initial state from the ', ...
+            'F_INIT coil currents at t0 = %.10g (setting operating_point ignored)\n'], t0);
+    else
+        model = linear_operating_point(model, pfa_t0, eq_ref, eq_time, t0, op_source);
+    end
     eq_comment = sprintf(['plasmaless linear model (%s): %s from the model, ', ...
         'boundary geometric axis = reference pass-through'], model.source.description, ...
         strjoin(model.y_names(model.op.y_known),'/'));

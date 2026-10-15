@@ -55,6 +55,11 @@ Setting `operating_point`:
   descriptor values are used only for what F_INIT does not have. The outputs start on
   the scenario, and the model's deviations are added to it.
 
+A descriptor with `coordinates: absolute` (absolute states, e.g. the circuit model
+exported as matrices) has no operating point: the actor starts it from the coil currents
+of the F_INIT pf_active slice closest to t0 (passive states 0, as the circuit model),
+ignores the setting `operating_point`, and prints one line saying so.
+
 An observable known by neither source stays unknown and is not sent. Each step uses
 du = V - `op.voltage`, so the operating point is held until the controller changes the
 voltages; the actor prints one line naming the setting, how many coil entries came from

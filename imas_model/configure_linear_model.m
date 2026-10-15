@@ -16,7 +16,13 @@ function [model, x0] = configure_linear_model(model_dir, dt, pf_active_md)
 % rX, zX, Ip, gap<k>, Dist2ndSep}), optional operating_point {coil_current,
 % voltage, outputs} (coil space, in this wrapper's (IMAS) convention), optional
 % convention {state_sign, input_sign, output_sign {output: sign}} (each +1 or
-% -1, default +1), notes.
+% -1, default +1), optional coordinates ('deviation', the default, or 'absolute'),
+% notes.
+% coordinates 'absolute': the states, inputs and outputs are absolute values (e.g. the
+% plasmaless circuit model exported as matrices): no operating_point is allowed, the
+% operating point is zero, every coil has a state of its own (not shared with another
+% coil), and the caller starts the run from the coil currents (x0 = x_to_coil'*I,
+% passive states 0) instead of x0 = 0.
 % Sign convention: the matrix files are written in the provider's frame,
 %   x_file = state_sign * x,  u_file = input_sign * u,  y_file(k) = output_sign(k) * y(k)
 % with x, u, y in the wrapper's (IMAS) convention. Substituting into
@@ -143,6 +149,26 @@ none = states(~is_coil_state & ~is_passive);
 if ~isempty(none)
     error('plasmaless:descriptor','%s: states {%s} are neither coil nor passive states.', desc_file, strjoin(none,','));
 end
+% coordinates: deviations from the operating point (default) or absolute values
+coordinates = 'deviation';
+if isfield(d,'coordinates')
+    coordinates = char(d.coordinates);
+    if ~any(strcmp(coordinates,{'deviation','absolute'}))
+        error('plasmaless:descriptor','%s: coordinates must be ''deviation'' or ''absolute'' (got ''%s'').', ...
+            desc_file, coordinates);
+    end
+end
+if strcmp(coordinates,'absolute')
+    if isfield(d,'operating_point')
+        error('plasmaless:descriptor','%s: an absolute model has no operating_point.', desc_file);
+    end
+    shared = states(sum(x_to_coil,1) > 1);
+    if ~isempty(shared)
+        error('plasmaless:descriptor', ['%s: an absolute model needs one state per coil; ', ...
+            'states {%s} are shared by several coils.'], desc_file, strjoin(shared,','));
+    end
+end
+
 loop_names = states(is_passive);
 n_loops = numel(loop_names);
 x_to_loop = zeros(n_loops,n);
@@ -161,6 +187,7 @@ if any(sysd.D(:) ~= 0)
 end
 
 model.kind = 'linear';
+model.coordinates = coordinates;
 model.sysd = sysd;
 model.A = sysd.A;
 model.B = sysd.B;
