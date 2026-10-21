@@ -1,10 +1,10 @@
 #!/bin/bash
 # Standalone MUSCLE3 test of the plasmaless actor: voltage_driver.py + actor,
 # settings in plasmaless_standalone.ymmsl (dt 0.01, t = 0 .. 28 s: ~3 min).
-# Optional first argument: directory of an external linear model (absolute path,
-# linear_model.json + matrices); the actor then runs that model instead of the
-# circuit model (setting plasmaless.linear_model_dir) and the results go to
-# plasmaless_muscle3_linear_results.mat.
+# Optional first argument: directory of a linear model (absolute path,
+# linear_model.json + matrices), default linear_models/plasmaless_model (the
+# plasma-free circuit model); it becomes the setting plasmaless.linear_model_dir.
+# Results: plasmaless_muscle3_linear_results.mat.
 # Uses 2 cores (driver + one single-threaded MATLAB); on the shared login node,
 # run it in Slurm for longer cases, e.g.
 #   srun --partition=all_debug --time=00:30:00 --cpus-per-task=2 --mem=8G ./run_plasmaless_muscle3.sh
@@ -12,29 +12,23 @@
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PLASMALESS_REPO="$(dirname "$here")"
 export OMP_NUM_THREADS=1
-linear_model_dir="${1:-}"
-if [ -n "$linear_model_dir" ] && [ ! -f "$linear_model_dir/linear_model.json" ]; then
+linear_model_dir="${1:-$PLASMALESS_REPO/linear_models/plasmaless_model}"
+if [ ! -f "$linear_model_dir/linear_model.json" ]; then
     echo "run_plasmaless_muscle3.sh: $linear_model_dir has no linear_model.json" >&2
     exit 2
 fi
 # the run directory only holds the MUSCLE3 logs; the results go to the repo root
 run_dir=/scratch/users/$USER/plasmaless/m3_standalone_$(date +%Y%m%d_%H%M%S)
 mkdir -p "$run_dir"
-if [ -n "$linear_model_dir" ]; then
-    results_file="$PLASMALESS_REPO/plasmaless_muscle3_linear_results.mat"
-else
-    results_file="$PLASMALESS_REPO/plasmaless_muscle3_results.mat"
-fi
+results_file="$PLASMALESS_REPO/plasmaless_muscle3_linear_results.mat"
 # absolute paths for the driver (a relative path would resolve in its instance work dir)
 cat > "$run_dir/paths.ymmsl" <<EOF
 ymmsl_version: v0.2
 settings:
   driver.md_uri: "imas:hdf5?path=$PLASMALESS_REPO/data/md_dd4"
   driver.results_file: "$results_file"
+  plasmaless.linear_model_dir: "$linear_model_dir"
 EOF
-if [ -n "$linear_model_dir" ]; then
-    echo "  plasmaless.linear_model_dir: \"$linear_model_dir\"" >> "$run_dir/paths.ymmsl"
-fi
 
 module use /work/projects/pds/modules/all
 module load IMAS-MUSCLE3/1.0.0-intel-2025b-pds

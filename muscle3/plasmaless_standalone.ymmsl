@@ -60,11 +60,14 @@ settings:
   dt: 0.01
   t_interval: 0.01      # must equal dt
   t_end: 28.0
-  # External linear model instead of the circuit model (directory holding
-  # linear_model.json + matrices, absolute path; run_plasmaless_muscle3.sh adds it
-  # to paths.ymmsl when given as first argument). The model's states are
-  # deviations from its linearisation point; the operating point comes from the
-  # descriptor and the F_INIT data at t0, setting plasmaless.operating_point:
+  # Linear model (directory holding linear_model.json + matrices, absolute path):
+  # run_plasmaless_muscle3.sh writes plasmaless.linear_model_dir to paths.ymmsl,
+  # by default linear_models/plasmaless_model (the plasma-free circuit model,
+  # absolute coordinates), else the folder given as first argument. A deviation
+  # model (e.g. the received model, linear_models/niceSimpleLin_105073_t84.4176)
+  # has states that are deviations from its linearisation point; the operating
+  # point comes from the descriptor and the F_INIT data at t0, setting
+  # plasmaless.operating_point:
   #   descriptor (default): descriptor values win, F_INIT fills the rest. The
   #     absolute coil currents and Ip start at the linearisation point, not at
   #     the F_INIT values (a controller would see a step error at t0). With the
@@ -75,7 +78,6 @@ settings:
   #     pulse-train voltages at t0 (10 V on CS3U), so op.voltage = u(t0) and the
   #     first pulse is seen as 0 V on CS3U, the later ones (and the end of the
   #     first) as -10 V; Ip is known as 0 (F_INIT ip).
-  # plasmaless.linear_model_dir: "/home/ITER/schneim/public/git/plasmaless-tokamak-circuits/linearModelSimple_105073_t84.417598"
   # plasmaless.operating_point: descriptor
 
 resources:

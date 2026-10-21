@@ -20,9 +20,10 @@ tend = 28;
 dt = 0.001;
 write_output = 0;   % 1: write the output slices to out_uri
 out_uri = 'imas:hdf5?path=/scratch/users/schneim/plasmaless/run_out';
-% '' = circuit model built from the machine description; the path of a directory
-% holding linear_model.json + matrices = external linear model (deviations from
-% its linearisation point), e.g. fullfile(repo_root,'linearModelSimple_105073_t84.417598').
+% '' = circuit model built from the machine description (coil voltages); the path of
+% a model folder of linear_models/ (linear_model.json + matrices, the 14
+% power-supply voltages as inputs) = linear model, e.g.
+% fullfile(repo_root,'linear_models','niceSimpleLin_105073_t84.4176').
 % Default: the environment variable PLASMALESS_LINEAR_MODEL_DIR when set, else ''.
 linear_model_dir = getenv('PLASMALESS_LINEAR_MODEL_DIR');
 

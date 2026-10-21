@@ -1,11 +1,14 @@
 function [pf_active_out, pf_passive_out, x_new, y_out] = plasmaless_step_ids(model, pf_active_in, x)
 % one time step of the plasmaless model (as plasmaless_timestep.slx)
 % model:        from configure_plasmaless_model (circuit) or configure_linear_model
-% pf_active_in: one slice (homogeneous_time 1) with the coil voltages u at t
+% pf_active_in: one slice (homogeneous_time 1) with the voltages u at t: for a
+%               linear model the 14 power-supply voltages, coil{k}.voltage = supply k
+%               (as the controller writes them); for the circuit model the coil
+%               voltages, matched by coil name
 % x:            state at t (model.n_states x 1)
 % Step: du = u - op.voltage; x_new = A*x + B*du; the outputs at t+dt are
 %   coil currents  op.coil_current + x_to_coil*x_new   (pf_active_out; the input
-%                  voltages are echoed, they are applied over [t, t+dt])
+%                  voltages are echoed in the same slots, they are applied over [t, t+dt])
 %   loop currents  x_to_loop*x_new                     (pf_passive_out)
 %   observables    op.y + C_y*x_new                    (y_out: names, values, known)
 % For the circuit model op is zero and y_out is empty; for a linear model the
@@ -21,14 +24,26 @@ if ~isequal(size(x),[model.n_states 1])
     error('plasmaless:state','State must be a %dx1 vector.', model.n_states);
 end
 
-% coil voltages in model order
-idx = match_coils(model, pf_active_in);
-u = zeros(model.n_coils,1);
-for ii = 1:model.n_coils
+if strcmp(model.kind,'linear')
+    % linear model: the 14 power-supply voltages (model.input_names), by index, as
+    % the controller writes them: coil{k}.voltage carries power supply k
+    idx = 1:numel(model.input_names);
+    u_names = model.input_names;
+    if numel(pf_active_in.coil) < numel(idx)
+        error('plasmaless:voltage','pf_active has %d coils, %d power-supply voltages expected.', ...
+            numel(pf_active_in.coil), numel(idx));
+    end
+else
+    % circuit model: the coil voltages, matched by coil name
+    idx = match_coils(model, pf_active_in);
+    u_names = model.coil_names;
+end
+u = zeros(numel(idx),1);
+for ii = 1:numel(idx)
     v = pf_active_in.coil{idx(ii)}.voltage.data;
     if numel(v) ~= 1 || v == -9e40 || ~isfinite(v)
-        error('plasmaless:voltage','pf_active coil %s: expected one voltage value at t = %g, got %d.', ...
-            model.coil_names{ii}, t, numel(v));
+        error('plasmaless:voltage','pf_active voltage %s: expected one value at t = %g, got %d.', ...
+            u_names{ii}, t, numel(v));
     end
     u(ii) = v;
 end

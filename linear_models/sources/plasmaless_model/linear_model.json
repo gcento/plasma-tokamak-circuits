@@ -1,7 +1,7 @@
 {
-  "description": "vertical-instability model around imas:hdf5?path=/home/ITER/centong/Desktop/PDSs/IMAS-PDS/cases/runs/inverse_convergence_105073/out_nice at 84.31759781 s, passive currents: zero (not in entry): rigid vertical plasma displacement (Ip fixed, no radial motion) with 14 coils and 102 passive loops; continuous time, dI/dt = A I + B U, deviations from the equilibrium currents",
+  "description": "plasmaless coil+vessel circuit model (no plasma), 14 coils + 102 passive loops: dI/dt = A I + B U, absolute currents and voltages",
   "shot": 0,
-  "time": 84.31759781,
+  "time": 0,
   "files": {
     "A": "A.npy",
     "B": "B.npy",
@@ -261,57 +261,14 @@
     "VES_99",
     "VES_100"
   ],
-  "outputs": [
-    "Ip",
-    "rmag",
-    "zmag"
-  ],
-  "coordinates": "deviation",
-  "operating_point": {
-    "coil_current": {
-      "CS3U": -22261.094281512636,
-      "CS2U": 9462.9744638010179,
-      "CS1U": 34197.389802894904,
-      "CS1L": 34197.389802894904,
-      "CS2L": 8033.2257638778319,
-      "CS3L": -38626.476424543274,
-      "PF1": -22720.9664235594,
-      "PF2": 30603.294171827129,
-      "PF3": 19075.900201911223,
-      "PF4": 39391.480732435433,
-      "PF5": 12168.369872408897,
-      "PF6": -20541.932450061813,
-      "VS3U": -1.132240409909381E-45,
-      "VS3L": 1.033256061763698E-44
-    },
-    "voltage": {
-      "CS3U": 0,
-      "CS2U": 0,
-      "CS1U": 0,
-      "CS1L": 0,
-      "CS2L": 0,
-      "CS3L": 0,
-      "PF1": 0,
-      "PF2": 0,
-      "PF3": 0,
-      "PF4": 0,
-      "PF5": 0,
-      "PF6": 0,
-      "VS3U": -1.0025988829747569E-47,
-      "VS3L": 9.149482426917546E-47
-    }
-  },
+  "outputs": [],
+  "coordinates": "absolute",
   "units": {
     "currents": "A",
-    "voltages": "V",
-    "rmag_zmag": "m",
-    "Ip": "A"
+    "voltages": "V"
   },
-  "provenance": "configure_vertical_instability_model (A. Coutlis et al., Nucl. Fusion 39 (1999); F. Pesamosca, PhD thesis, EPFL (2021), App. B); passive currents: zero (not in entry); written by linear_models/utils/lin_vertical_instability/write_state_matrix.m on 2026-10-18",
+  "provenance": "machine description imas:hdf5?path=/home/ITER/centong/Desktop/PDSs/IMAS-PDS/local_installs/plasmaless-tokamak-circuits/data/md_dd4; A = -M\\R, B = M\\eye(n,n_coils) as configure_plasmaless_model.m; written by linear_models/utils/export_plasmaless_model.m on 2026-10-15. Raw source: the inputs are the 14 coil voltages, so the plant does not load it; linear_models/utils/transform_plasmaless_model.m writes its circuit form linear_models/plasmaless_model",
   "notes": [
-    "Continuous-time matrices, as for the other models: the plant discretises them with plant.dt (zero-order hold).",
-    "zmag = zIp/Ip0: rigid vertical displacement of the plasma current distribution; the magnetic axis moves by the same amount. The Ip and rmag rows are zero: Ip is fixed and there is no radial motion, so the controller cannot act on them.",
-    "Operating point: coil currents = equilibrium currents Ic0; voltages = R*Ic0, which keep the currents constant (zero on the coils without resistance in the machine description). No output values: with operating_point descriptor the plant takes Ip and the magnetic axis from the F_INIT equilibrium at t0.",
-    "Open-loop unstable: 1 eigenvalue(s) of A with positive real part, growth rate 7.122 1/s (e-folding time 140.4 ms)."
+    "Not tied to a pulse: shot and time are 0. Absolute model (no operating point): the actor starts it from the F_INIT coil currents at t0 (passive currents 0) and ignores the setting operating_point."
   ]
 }

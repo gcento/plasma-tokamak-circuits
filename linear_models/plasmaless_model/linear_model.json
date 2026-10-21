@@ -1,5 +1,5 @@
 {
-  "description": "plasmaless coil+vessel circuit model (no plasma), 14 coils + 102 passive loops: dI/dt = A I + B U, absolute currents and voltages",
+  "description": "plasmaless coil+vessel circuit model (no plasma), 12 coil circuits (14 voltage inputs) + 102 passive loops: dI/dt = A I + B U, absolute currents and voltages",
   "shot": 0,
   "time": 0,
   "files": {
@@ -10,8 +10,7 @@
   "states": [
     "CS3U",
     "CS2U",
-    "CS1U",
-    "CS1L",
+    "CS1",
     "CS2L",
     "CS3L",
     "PF1",
@@ -20,8 +19,7 @@
     "PF4",
     "PF5",
     "PF6",
-    "VS3U",
-    "VS3L",
+    "VS3",
     "TRI_SUPP",
     "INB_RAIL",
     "VES_1",
@@ -137,15 +135,15 @@
     "PF3",
     "PF4",
     "PF5",
+    "VS1",
     "PF6",
-    "VS3U",
-    "VS3L"
+    "VS3"
   ],
   "coil_states": {
     "CS3U": "CS3U",
     "CS2U": "CS2U",
-    "CS1U": "CS1U",
-    "CS1L": "CS1L",
+    "CS1U": "CS1",
+    "CS1L": "CS1",
     "CS2L": "CS2L",
     "CS3L": "CS3L",
     "PF1": "PF1",
@@ -154,8 +152,8 @@
     "PF4": "PF4",
     "PF5": "PF5",
     "PF6": "PF6",
-    "VS3U": "VS3U",
-    "VS3L": "VS3L"
+    "VS3U": "VS3",
+    "VS3L": "-VS3"
   },
   "passive_states": [
     "TRI_SUPP",
@@ -267,8 +265,9 @@
     "currents": "A",
     "voltages": "V"
   },
-  "provenance": "machine description imas:hdf5?path=/home/ITER/centong/Desktop/PDSs/IMAS-PDS/local_installs/plasmaless-tokamak-circuits/data/md_dd4; A = -M\\R, B = M\\eye(n,n_coils) as configure_plasmaless_model.m; written by linear_models/export_plasmaless_model.m on 2026-10-15",
+  "provenance": "linear_models/sources/plasmaless_model reduced to 12 circuits by linear_models/utils/transform_plasmaless_model.m: M from the machine description (data/md_dd4), Wm = (W'*M*W)\\(W'*M), A = Wm*A0*W, B = Wm*B0*V, C = C0*W",
   "notes": [
-    "Not tied to a pulse: shot and time are 0. Absolute model: the actor starts it from the F_INIT coil currents at t0 (passive currents 0) and ignores the setting operating_point, exactly as the circuit model of linear_model_dir = ''."
+    "Not tied to a pulse: shot and time are 0. Absolute model (no operating point): the actor starts it from the F_INIT coil currents at t0 (passive currents 0) and ignores the setting operating_point.",
+    "Circuit states (2026-10-21): CS1U = CS1L = CS1 (series), VS3U = VS3, VS3L = -VS3 (antiseries, VS3 is the VS3U current); inputs: the 14 power supplies, VS1 = -PF2 -PF3 +PF4 +PF5, VS3 = V(VS3L) - V(VS3U)."
   ]
 }

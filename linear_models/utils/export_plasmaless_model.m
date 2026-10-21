@@ -1,19 +1,19 @@
 function export_plasmaless_model(plasmaless_repo, out_dir, md_uri)
-% Export the plasmaless coil+vessel circuit model (no plasma) as a linear model folder
-% (linear_model.json + A, B, C .npy) for the actor setting linear_model_dir, so that it is
-% selected like the NICE models of linear_models/.
+% Export the plasmaless coil+vessel model (no plasma) of a machine description as the raw
+% source linear_models/sources/plasmaless_model (linear_model.json + A, B, C .npy):
+% 14 coils + passive loops, with the 14 coil voltages as inputs. The plant does not load
+% it (its inputs are not the power supplies): linear_models/utils/
+% transform_plasmaless_model.m reduces it to the ITER circuits and writes
+% linear_models/plasmaless_model.
 %   export_plasmaless_model(plasmaless_repo, out_dir)          % md: <repo>/data/md_dd4
 %   export_plasmaless_model(plasmaless_repo, out_dir, md_uri)
+% with out_dir = <repo>/linear_models/sources/plasmaless_model.
 % Needs IMAS-MATLAB (reads the machine description) and the Control System Toolbox; run
 % it on a compute node.
 %
-% The circuit model is absolute (states = coil and passive currents), so the descriptor
-% has coordinates 'absolute' and no operating point: the actor starts it from the F_INIT
-% coil currents at t0, passive currents 0, as with linear_model_dir = '' (needs the
-% plasmaless actor branch IMAS_Muscle3_absolute).
-% After writing, the folder is read back with configure_linear_model and checked against
-% configure_plasmaless_model over 1000 steps with random voltages, from the same initial
-% coil currents.
+% The model is absolute (states = coil and passive currents), so the descriptor has
+% coordinates 'absolute' and no operating point. After writing, A.npy and B.npy are read
+% back and compared with the computed matrices.
 
 plasmaless_repo = char(plasmaless_repo);
 out_dir = char(out_dir);
@@ -24,7 +24,7 @@ md_uri = char(md_uri);   % imas_open needs a char URI
 addpath(fullfile(plasmaless_repo,'imas_model'));
 
 % dt is not in the exported matrices: configure_plasmaless_model needs one (M and R do not
-% depend on it), and the check below discretises both models with it
+% depend on it)
 dt = 0.002;
 [em_coupling, pf_active, pf_passive] = load_plasmaless_md(md_uri);
 native = configure_plasmaless_model(em_coupling, pf_active, pf_passive, dt);
@@ -33,7 +33,6 @@ n_coils = native.n_coils;
 % continuous matrices exactly as configure_plasmaless_model builds them
 Ac = -native.M\native.R;
 Bc = native.M\eye(n,n_coils);
-r_coil = diag(native.R(1:n_coils,1:n_coils));
 
 if ~isfolder(out_dir)
     mkdir(out_dir);
@@ -59,44 +58,24 @@ d.outputs = {};
 d.coordinates = 'absolute';
 d.units = struct('currents','A','voltages','V');
 d.provenance = sprintf(['machine description %s; A = -M\\R, B = M\\eye(n,n_coils) as ', ...
-    'configure_plasmaless_model.m; written by linear_models/utils/export_plasmaless_model.m on %s'], ...
+    'configure_plasmaless_model.m; written by linear_models/utils/export_plasmaless_model.m on %s. ', ...
+    'Raw source: the inputs are the 14 coil voltages, so the plant does not load it; ', ...
+    'linear_models/utils/transform_plasmaless_model.m writes its circuit form ', ...
+    'linear_models/plasmaless_model'], ...
     md_uri, char(datetime('today','Format','yyyy-MM-dd')));
-d.notes = {['Not tied to a pulse: shot and time are 0. Absolute model: the actor starts ', ...
-    'it from the F_INIT coil currents at t0 (passive currents 0) and ignores the setting ', ...
-    'operating_point, exactly as the circuit model of linear_model_dir = ''''.']};
+d.notes = {['Not tied to a pulse: shot and time are 0. Absolute model (no operating point): ', ...
+    'the actor starts it from the F_INIT coil currents at t0 (passive currents 0) and ', ...
+    'ignores the setting operating_point.']};
 fid = fopen(fullfile(out_dir,'linear_model.json'),'w');
 fprintf(fid,'%s\n',jsonencode(d,'PrettyPrint',true));
 fclose(fid);
 
-% check: the folder read by the actor's own loader against the circuit model
-lin = configure_linear_model(out_dir, dt, pf_active);
-if ~isequal(lin.A, native.A) || ~isequal(lin.B, native.B)
-    error('export_plasmaless_model:check', ['discrete matrices differ: max |dA| %g, ', ...
-        'max |dB| %g.'], max(abs(lin.A(:)-native.A(:))), max(abs(lin.B(:)-native.B(:))));
+% check: the matrix files read back as transform_plasmaless_model.m reads them
+if ~isequal(read_npy(fullfile(out_dir,'A.npy')), Ac) || ~isequal(read_npy(fullfile(out_dir,'B.npy')), Bc)
+    error('export_plasmaless_model:check','A.npy or B.npy differ from the computed matrices.');
 end
-if ~strcmp(lin.coordinates,'absolute') || any(lin.op.coil_current) || any(lin.op.voltage)
-    error('export_plasmaless_model:check', ['the actor does not read the folder as an ', ...
-        'absolute model (plasmaless repository without coordinates support?).']);
-end
-rng(0);
-i0 = 1e4*randn(n_coils,1);
-i0(r_coil > 0) = 200*randn(nnz(r_coil > 0),1);
-x_native = [i0; zeros(native.n_loops,1)];
-x_lin = lin.x_to_coil'*i0;          % initial state as muscle_plasmaless_actor builds it
-err = 0;
-for k = 1:1000
-    u = 100*randn(n_coils,1);
-    x_native = native.A*x_native + native.B*u;
-    x_lin = lin.A*x_lin + lin.B*u;
-    i_lin = [lin.x_to_coil*x_lin; lin.x_to_loop*x_lin];
-    err = max(err, max(abs(i_lin - x_native))/max(abs(x_native)));
-end
-if err > 1e-9
-    error('export_plasmaless_model:check','currents differ from the circuit model (relative %g).', err);
-end
-fprintf(['export_plasmaless_model: wrote %s (%d states, %d inputs); same discrete A and B ', ...
-    'as the circuit model, currents equal over 1000 steps (max relative difference %.1e)\n'], ...
-    out_dir, n, n_coils, err);
+fprintf(['export_plasmaless_model: wrote %s (%d states, %d coil-voltage inputs); next: ', ...
+    'linear_models/utils/transform_plasmaless_model.m\n'], out_dir, n, n_coils);
 end
 
 function write_npy(filename, M)

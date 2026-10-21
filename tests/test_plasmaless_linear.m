@@ -1,26 +1,33 @@
 classdef test_plasmaless_linear < matlab.unittest.TestCase
-    % Unit tests for the external linear model (imas_model/configure_linear_model.m)
-    % with the received NICE linearisation linearModelSimple_105073_t84.417598
-    % (pulse 105073, confirmed by the user on 2026-10-14, delivered under the label 105078;
-    % descriptor with a sign-convention block).
+    % Unit tests for the linear plant models (imas_model/configure_linear_model.m). Fixture:
+    % linear_models/niceSimpleLin_105073_t84.4176, the circuit form (12 circuit states) of
+    % the received NICE linearisation (pulse 105073, confirmed by the user on 2026-10-14,
+    % delivered under the label 105078; descriptor with a sign-convention block; raw
+    % delivery in linear_models/sources/).
     %
     % Run from the repository root with an IMAS-MATLAB DD-4.x module, reading an
     % IMAS entry first with MATLAB R2024a (see tests/test_plasmaless_imas.m):
     % add_plasmaless_paths; load_plasmaless_md(); runtests('tests/test_plasmaless_linear.m')
-    % Eight tests
-    % 1) test_build (sizes, generator-to-coil input map, state mapping, sign
-    %    convention of the descriptor (B unchanged, Ip row of C unchanged, geometric
-    %    rows negated), operating point of the descriptor (IMAS convention), D = 0,
-    %    stability, read_npy vs the .txt files)
-    % 2) test_step_loop (plasmaless_step_ids vs the direct recursion x_{k+1} = A x_k + B u_k)
+    % Nine tests
+    % 1) test_build (sizes, power-supply inputs applied to B as they are, circuit
+    %    states (CS1U = CS1L, VS3L = -VS3U), sign convention of the descriptor (B
+    %    unchanged, Ip row of C unchanged, geometric rows negated), operating point of
+    %    the descriptor (IMAS convention), D = 0, stability)
+    % 2) test_step_loop (plasmaless_step_ids vs the direct recursion x_{k+1} = A x_k + B u_k;
+    %    the 14 power-supply voltages read by index, coil{k}.voltage = supply k)
     % 3) test_operating_point (du = u - op.voltage, output offsets)
     % 4) test_descriptor_errors (broken descriptors raise the documented errors,
-    %    incl. the convention block; without convention the file matrices are used as is)
-    % 5) test_input_map_compat (descriptor without input_map: coil inputs, permutation)
+    %    incl. the convention block and the ITER circuits; the raw sources are refused;
+    %    without convention the file matrices are used as is)
+    % 5) test_all_models_circuits (every model of linear_models/, future ones included:
+    %    B columns of CS1U and CS1L equal, VS1 = -PF2 -PF3 +PF4 +PF5, signs of the
+    %    supply responses, one step with CS1U = CS1L and VS3U = -VS3L)
     % 6) test_observables_round_trip (equilibrium IDS write/read)
     % 7) test_circuit_unchanged (circuit model selections and 4-output step)
     % 8) test_one_pulse_per_generator (input identification: one bipolar pulse per
     %    generator on the continuous file matrices, which currents react)
+    % 9) test_absolute_initial_state (linear_models/plasmaless_model: initial state from
+    %    the coil currents, error when they violate the circuits)
     properties
         rootDir
         modelDir
@@ -33,7 +40,7 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
         function setup(testCase)
             testCase.rootDir = fileparts(fileparts(mfilename('fullpath')));
             addpath(testCase.rootDir, fullfile(testCase.rootDir,'imas_model'));
-            testCase.modelDir = fullfile(testCase.rootDir,'linearModelSimple_105073_t84.417598');
+            testCase.modelDir = fullfile(testCase.rootDir,'linear_models','niceSimpleLin_105073_t84.4176');
             md_uri = getenv('PLASMALESS_MD_URI');   % empty: data/md_dd4 default
             [testCase.em_coupling, testCase.pf_active, testCase.pf_passive] = ...
                 load_plasmaless_md(md_uri);
@@ -46,72 +53,55 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             dt = 0.01;
             [model, x0] = configure_linear_model(testCase.modelDir, dt, testCase.pf_active);
             testCase.verifyEqual(model.kind, 'linear');
-            testCase.verifyEqual(model.n_states, 17);
+            testCase.verifyEqual(model.n_states, 16);
             testCase.verifyEqual(model.n_coils, 14);
             testCase.verifyEqual(model.n_loops, 4);
             testCase.verifyEqual(numel(model.y_names), 9);
-            testCase.verifySize(model.A, [17 17]);
-            testCase.verifySize(model.B, [17 14]);
-            testCase.verifySize(model.C_y, [9 17]);
-            testCase.verifySize(model.x_to_coil, [14 17]);
-            testCase.verifySize(model.x_to_loop, [4 17]);
-            testCase.verifySize(x0, [17 1]);
-            testCase.verifyEqual(x0, zeros(17,1));
+            testCase.verifySize(model.A, [16 16]);
+            testCase.verifySize(model.B, [16 14]);
+            testCase.verifySize(model.C_y, [9 16]);
+            testCase.verifySize(model.x_to_coil, [14 16]);
+            testCase.verifySize(model.x_to_loop, [4 16]);
+            testCase.verifySize(x0, [16 1]);
+            testCase.verifyEqual(x0, zeros(16,1));
             testCase.verifyEqual(model.coil_names, {'CS3U','CS2U','CS1U','CS1L','CS2L','CS3L', ...
                 'PF1','PF2','PF3','PF4','PF5','PF6','VS3U','VS3L'});
             % inputs: the 14 generator voltages (model provider, 2026-10-14)
             testCase.verifyEqual(model.input_names, {'CS3U','CS2U','CS1U','CS1L','CS2L','CS3L', ...
                 'PF1','PF2','PF3','PF4','PF5','VS1','PF6','VS3'});
             testCase.verifyEqual(model.state_names, {'CS3U','CS2U','CS1','CS2L','CS3L', ...
-                'PF1','PF2','PF3','PF4','PF5','PF6','VS3','-VS3','PS_1','PS_2','VV_1','VV_2'});
+                'PF1','PF2','PF3','PF4','PF5','PF6','VS3','PS_1','PS_2','VV_1','VV_2'});
             testCase.verifyEqual(model.loop_names, {'PS_1','PS_2','VV_1','VV_2'});
+            % circuits: CS1U and CS1L on the state CS1 (series), VS3U = VS3 and
+            % VS3L = -VS3 (antiseries)
             iU = find(strcmp(model.coil_names,'CS1U')); iL = find(strcmp(model.coil_names,'CS1L'));
             testCase.verifyEqual(model.x_to_coil(iU,:), model.x_to_coil(iL,:));
             testCase.verifyEqual(model.x_to_coil(strcmp(model.coil_names,'VS3U'),:), ...
                 double(strcmp(model.state_names,'VS3')));
             testCase.verifyEqual(model.x_to_coil(strcmp(model.coil_names,'VS3L'),:), ...
-                double(strcmp(model.state_names,'-VS3')));
-            testCase.verifyEqual(sum(model.x_to_coil,2), ones(14,1));
+                -double(strcmp(model.state_names,'VS3')));
+            testCase.verifyEqual(sum(abs(model.x_to_coil),2), ones(14,1));
             testCase.verifyEqual(sum(model.x_to_loop,2), ones(4,1));
             testCase.verifyEqual(model.D, zeros(9,14));
             testCase.verifyEqual(model.dt, dt);
             testCase.verifyLessThanOrEqual(max(real(eig(model.A_c))), 1e-9);
-            % the same matrix as readmatrix of the 6-digit .txt files
-            A_txt = readmatrix(fullfile(testCase.modelDir,'linModSimpleA.txt'));
-            A_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleA.npy'));
+            % the matrix files, used as they are
+            A_npy = read_npy(fullfile(testCase.modelDir,'A.npy'));
+            B_npy = read_npy(fullfile(testCase.modelDir,'B.npy'));
+            C_npy = read_npy(fullfile(testCase.modelDir,'C.npy'));
             testCase.verifyEqual(A_npy, model.A_c);
-            testCase.verifyLessThanOrEqual(max(abs(A_npy - A_txt),[],'all'), ...
-                1e-4*max(abs(A_txt),[],'all'));
-            C_txt = readmatrix(fullfile(testCase.modelDir,'linModSimpleC.txt'));
-            C_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleC.npy'));
             testCase.verifyEqual(model.C_file, C_npy);
-            testCase.verifyLessThanOrEqual(max(abs(C_npy - C_txt),[],'all'), ...
-                1e-4*max(abs(C_txt),[],'all'));
-            B_txt = readmatrix(fullfile(testCase.modelDir,'linModSimpleB.txt'));
-            B_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleB.npy'));
-            testCase.verifyLessThanOrEqual(max(abs(B_npy - B_txt),[],'all'), ...
-                1e-4*max(abs(B_txt),[],'all'));
-            testCase.verifyEqual(model.B_c_input, B_npy);
-            % input map: CS/PF generator columns on their coil, PF6 = column 13,
-            % VS3 (column 14) = -VS3U +VS3L (generator voltage V(VS3L) - V(VS3U),
-            % provider's positive-V-positive-I rule on B, 2026-10-14), VS1 (column 12)
-            % on no coil
-            testCase.verifySize(model.input_map, [14 14]);
-            testCase.verifySize(model.B_c, [17 14]);
-            col = @(name) model.B_c(:,strcmp(model.coil_names,name));
-            for name = {'CS3U','CS2U','CS1U','CS1L','CS2L','CS3L','PF1','PF2','PF3','PF4','PF5'}
-                testCase.verifyEqual(col(name{1}), B_npy(:,strcmp(model.input_names,name{1})), name{1});
-            end
-            testCase.verifyEqual(col('PF6'), B_npy(:,13));
-            testCase.verifyEqual(col('VS3U'), -B_npy(:,14));
-            testCase.verifyEqual(col('VS3L'), B_npy(:,14));
-            testCase.verifyEqual(model.input_map(12,:), zeros(1,14));   % VS1 undriven
-            testCase.verifyEqual(sum(model.input_map ~= 0, 2), [ones(11,1); 0; 1; 2]);
-            testCase.verifyEqual(model.B_c, B_npy*model.input_map);
+            % inputs: the 14 power-supply voltages, applied to B as they are; VS1
+            % (column 12) acts as -PF2 -PF3 +PF4 +PF5 (own check, 2026-10-15)
+            testCase.verifyEqual(model.B_c, B_npy);
+            testCase.verifySize(model.B_c, [16 14]);
+            col = @(name) B_npy(:,strcmp(model.input_names,name));
+            vs1 = -col('PF2') - col('PF3') + col('PF4') + col('PF5');
+            testCase.verifyLessThanOrEqual(norm(col('VS1') - vs1), 1e-12*norm(vs1));
             % sign convention of the descriptor (2026-10-14): state_sign -1,
             % input_sign -1, output_sign Ip -1 and +1 for the geometric outputs.
-            % B_conv = (input_sign/state_sign) B = B: the coil-space B_c is the file
-            % B through the input map with no sign change; C_conv(k,:) =
+            % B_conv = (input_sign/state_sign) B = B: B_c is the file B with no sign
+            % change; C_conv(k,:) =
             % (state_sign/output_sign(k)) C(k,:): the Ip row is unchanged, the
             % geometric rows (rmag, zmag, rX, zX, gap1..3, Dist2ndSep) are negated.
             testCase.verifyEqual(model.convention.state_sign, -1);
@@ -119,17 +109,13 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             testCase.verifyEqual(model.convention.output_sign, [1;1;1;1;-1;1;1;1;1]);
             testCase.verifyEqual(model.A_file, A_npy);
             testCase.verifyEqual(model.B_file, B_npy);
-            testCase.verifyEqual(model.B_c_input, model.B_file);
-            testCase.verifyEqual(model.B_c, model.B_file*model.input_map);
+            testCase.verifyEqual(model.B_c, model.B_file);
             iIp = find(strcmp(model.y_names,'Ip'));
             testCase.verifyEqual(iIp, 5);
             testCase.verifyEqual(model.C_c(iIp,:), C_npy(5,:));
             testCase.verifyEqual(model.C_c(strcmp(model.y_names,'rmag'),:), -C_npy(1,:));
             testCase.verifyEqual(model.C_c, [-C_npy(1:4,:); C_npy(5,:); -C_npy(6:9,:)]);
             testCase.verifyEqual(model.C_y, model.C_c);   % zero-order hold keeps C
-            % building emits the undriven-input warning once (VS1)
-            testCase.verifyWarning(@() configure_linear_model(testCase.modelDir, dt, testCase.pf_active), ...
-                'plasmaless:inputUndriven');
             % operating point of the descriptor in the IMAS convention: the negated
             % provider values (model provider, 2026-10-14; frame derived from the DINA
             % 105073 data, 2026-10-14)
@@ -137,8 +123,8 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
                 -19884.8 -40412.3 -10061.6 19263.3 203.564 -203.564]';
             testCase.verifyEqual(model.op.coil_current, op_cur);
             testCase.verifyEqual(model.op.coil_current_given, true(14,1));
-            testCase.verifyEqual(model.op.voltage, zeros(14,1));
-            testCase.verifyEqual(model.op.voltage_given, true(14,1));
+            testCase.verifyEqual(model.op.voltage, zeros(14,1));      % no voltage entry
+            testCase.verifyEqual(model.op.voltage_given, false(14,1));
             y_known = ismember(model.y_names, {'rmag','zmag','Ip'})';
             testCase.verifyEqual(model.op.y_known, y_known);
             testCase.verifyEqual(model.op.y(strcmp(model.y_names,'rmag')), 6.29704);
@@ -188,6 +174,8 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             testCase.verifyLessThanOrEqual(max(abs(Yo - Yd),[],'all'), 1e-12*max(abs(Yd),[],'all'));
             iU = find(strcmp(model.coil_names,'CS1U')); iL = find(strcmp(model.coil_names,'CS1L'));
             testCase.verifyEqual(Ia(:,iU), Ia(:,iL));
+            iU = find(strcmp(model.coil_names,'VS3U')); iL = find(strcmp(model.coil_names,'VS3L'));
+            testCase.verifyEqual(Ia(:,iU), -Ia(:,iL));
             testCase.verifyTrue(all(isfinite(X(:))));
         end
 
@@ -231,19 +219,11 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             % input count differs from the columns of B
             bad = d; bad.inputs{end+1} = 'VS1b';
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:size');
-            % input_map: unknown coil
-            bad = d; bad.input_map.CS3U = struct('XX1', 1);
+            % input_map is no longer accepted: the inputs are the power-supply voltages
+            bad = d; bad.input_map = struct('VS3', struct('VS3U', -1, 'VS3L', 1));
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
-            % input_map: key that is not an input
-            bad = d; bad.input_map.XX1 = struct('CS3U', 1);
-            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
-            % input_map: non-finite coefficient (Infinity in the JSON text), then a string
-            bad = d; bad.input_map.CS3U = struct('CS3U', Inf);
-            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
-            bad = d; bad.input_map.CS3U = struct('CS3U', 'one');
-            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
-            % input_map not an object
-            bad = d; bad.input_map = 1;
+            % inputs: the 14 power supplies in the controller's order (here PF6 and VS1 swapped)
+            bad = d; bad.inputs([12 13]) = bad.inputs([13 12]);
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
             % missing coil in coil_states
             bad = d; bad.coil_states = rmfield(bad.coil_states,'PF6');
@@ -257,6 +237,28 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             % state both coil and passive
             bad = d; bad.passive_states{end+1} = 'PF6';
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
+            % coil_states outside the ITER circuits: CS1L on another state, CS1L with
+            % the opposite sign of CS1U, VS3L with the same sign as VS3U
+            bad = d; bad.coil_states.CS1L = 'CS2L';
+            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:circuits');
+            bad = d; bad.coil_states.CS1L = '-CS1';
+            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:circuits');
+            bad = d; bad.coil_states.VS3L = 'VS3';
+            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:circuits');
+            % the raw sources are not plant models: NICE with VS3 and -VS3 as two
+            % states, the plasma-free model with the coil voltages as inputs
+            src = fullfile(testCase.rootDir,'linear_models','sources');
+            testCase.verifyError(@() configure_linear_model(fullfile(src, ...
+                'niceSimpleLin_105073_t84.4176'), dt, testCase.pf_active), 'plasmaless:circuits');
+            testCase.verifyError(@() configure_linear_model(fullfile(src,'plasmaless_model'), ...
+                dt, testCase.pf_active), 'plasmaless:descriptor');
+            % absolute coordinates: circuit states shared by two coils are accepted, an
+            % operating point is not
+            absolute = rmfield(d,'operating_point'); absolute.coordinates = 'absolute';
+            model = testCase.buildFrom(base, absolute, dt);
+            testCase.verifyEqual(model.coordinates, 'absolute');
+            bad = d; bad.coordinates = 'absolute';
+            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
             % missing required field
             bad = rmfield(d,'outputs');
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
@@ -265,7 +267,7 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:observable');
             % wrong-size matrix
             bad = d; bad.files.A = 'wrongA.txt';
-            testCase.verifyError(@() testCase.buildFrom(base, bad, dt, 'wrongA.txt', zeros(16,17)), ...
+            testCase.verifyError(@() testCase.buildFrom(base, bad, dt, 'wrongA.txt', zeros(15,16)), ...
                 'plasmaless:size');
             % missing matrix file
             bad = d; bad.files.B = 'missing.npy';
@@ -290,20 +292,19 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             % no convention block: all signs +1, the file matrices are used unchanged
             none_conv = rmfield(d,'convention');
             model = testCase.buildFrom(base, none_conv, dt);
-            B_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleB.npy'));
-            C_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleC.npy'));
+            B_npy = read_npy(fullfile(testCase.modelDir,'B.npy'));
+            C_npy = read_npy(fullfile(testCase.modelDir,'C.npy'));
             testCase.verifyEqual(model.convention.state_sign, 1);
             testCase.verifyEqual(model.convention.input_sign, 1);
             testCase.verifyEqual(model.convention.output_sign, ones(9,1));
-            testCase.verifyEqual(model.B_c_input, B_npy);
-            testCase.verifyEqual(model.B_c, B_npy*model.input_map);
+            testCase.verifyEqual(model.B_c, B_npy);
             testCase.verifyEqual(model.C_c, C_npy);
             testCase.verifyEqual(model.C_y, C_npy);
             % partial block (only state_sign): B and all C rows negated
             part = none_conv; part.convention = struct('state_sign', -1);
             model = testCase.buildFrom(base, part, dt);
             testCase.verifyEqual(model.convention.input_sign, 1);
-            testCase.verifyEqual(model.B_c_input, -B_npy);
+            testCase.verifyEqual(model.B_c, -B_npy);
             testCase.verifyEqual(model.C_c, -C_npy);
             % missing descriptor
             testCase.verifyError(@() configure_linear_model(tempname(base), dt, testCase.pf_active), ...
@@ -328,27 +329,51 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             testCase.verifyEqual(model.op.y_known, false(9,1));
         end
 
-        function test_input_map_compat(testCase)
-            % descriptor without input_map: inputs must be the coil set and the
-            % map is the permutation to machine-description order
-            dt = 0.01;
-            base = fullfile('/scratch/users', getenv('USER'), 'plasmaless');
-            if ~isfolder(base), mkdir(base); end
-            d = jsondecode(fileread(fullfile(testCase.modelDir,'linear_model.json')));
-            d = rmfield(d,'input_map');
-            coils = {'CS3U','CS2U','CS1U','CS1L','CS2L','CS3L','PF1','PF2','PF3','PF4','PF5', ...
-                'PF6','VS3U','VS3L'};
-            d.inputs = fliplr(coils);          % reversed order: a real permutation
-            model = testCase.buildFrom(base, d, dt);
-            B_npy = read_npy(fullfile(testCase.modelDir,'linModSimpleB.npy'));
-            testCase.verifyEqual(model.input_names, fliplr(coils));
-            testCase.verifyEqual(model.coil_names, coils);
-            testCase.verifyEqual(model.B_c, fliplr(B_npy));
-            testCase.verifyEqual(model.input_map, fliplr(eye(14)));
-            testCase.verifySize(model.B, [17 14]);
-            % inputs that are not the coil set are an error without input_map
-            bad = d; bad.inputs{1} = 'VS3';
-            testCase.verifyError(@() testCase.buildFrom(base, bad, dt), 'plasmaless:descriptor');
+        function test_all_models_circuits(testCase)
+            % every model of linear_models/ (one folder per model; linear_models/sources/
+            % holds the raw sources, not plant models) is built as NICE: the 14
+            % power-supply voltages in, the ITER circuits as states (checked by
+            % configure_linear_model), the coil currents out. New model folders are
+            % picked up automatically.
+            files = dir(fullfile(testCase.rootDir,'linear_models','*','linear_model.json'));
+            testCase.verifyGreaterThanOrEqual(numel(files), 4);
+            w = warning('off','plasmaless:unstable');   % vertical models: unstable by design
+            restore = onCleanup(@() warning(w));
+            for k = 1:numel(files)
+                [~, label] = fileparts(files(k).folder);
+                model = configure_linear_model(files(k).folder, 0.001, testCase.pf_active);
+                % B: CS1U and CS1L drive the same circuit; VS1 = -PF2 -PF3 +PF4 +PF5
+                col = @(s) model.B_c(:,strcmp(model.input_names,s));
+                testCase.verifyLessThanOrEqual(norm(col('CS1U') - col('CS1L')), ...
+                    1e-12*norm(col('CS1L')), [label ': B columns CS1U and CS1L differ']);
+                vs1 = -col('PF2') - col('PF3') + col('PF4') + col('PF5');
+                testCase.verifyLessThanOrEqual(norm(col('VS1') - vs1), 1e-12*norm(vs1), ...
+                    [label ': B column VS1 is not -PF2 -PF3 +PF4 +PF5']);
+                % signs (IMAS convention): a positive supply voltage raises the current
+                % of its own coil at first; a positive VS3 raises the VS3L current
+                dI = model.x_to_coil*model.B_c;     % initial dI/dt per volt, coil x supply
+                coil = @(s) strcmp(model.coil_names,s);
+                for s = setdiff(model.input_names, {'VS1','VS3'}, 'stable')
+                    testCase.verifyGreaterThan(dI(coil(s{1}), strcmp(model.input_names,s{1})), 0, ...
+                        sprintf('%s: supply %s does not raise its coil current', label, s{1}));
+                end
+                j3 = strcmp(model.input_names,'VS3');
+                testCase.verifyGreaterThan(dI(coil('VS3L'),j3), 0, [label ': VS3 does not raise the VS3L current']);
+                testCase.verifyLessThan(dI(coil('VS3U'),j3), 0, [label ': VS3 does not lower the VS3U current']);
+                % one step from the operating point with all supplies driven: series
+                % and antiseries coil currents
+                u = model.op.voltage' + 100*sin(1:14);
+                pfa = plasmaless_step_ids(model, test_plasmaless_linear.inputSlice(model, 0, u), ...
+                    zeros(model.n_states,1));
+                Ia = cellfun(@(c) c.current.data, pfa.coil(:));
+                dIa = Ia - model.op.coil_current;
+                tol = 1e-9*max(1, max(abs(Ia)));
+                testCase.verifyGreaterThan(max(abs(dIa)), 1e3*tol, [label ': no response']);
+                testCase.verifyLessThanOrEqual(abs(dIa(coil('CS1U')) - dIa(coil('CS1L'))), tol, ...
+                    [label ': CS1U and CS1L currents differ']);
+                testCase.verifyLessThanOrEqual(abs(dIa(coil('VS3U')) + dIa(coil('VS3L'))), tol, ...
+                    [label ': VS3U and VS3L currents are not opposite']);
+            end
         end
 
         function test_observables_round_trip(testCase)
@@ -462,7 +487,7 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
             % 3) VS1 (star point in series with PF2-PF5): measured max |deviation|
             %    (2026-10-14) PF2 13.13, PF3 2.905, PF4 4.504, PF5 3.608 A, initial
             %    signs - - + +; CS coils at most 0.869 A (CS2U), PF1 0.592, PF6 0.473 A
-            %    (VS3 83.6, -VS3 82.0 A, not part of this check)
+            %    (VS3 about 83 A, not part of this check)
             jV = find(strcmp(gen,'VS1'));
             iStar = find(ismember(st, {'PF2','PF3','PF4','PF5'}));
             iOther = find(ismember(st, {'CS3U','CS2U','CS1','CS2L','CS3L','PF1','PF6'}));
@@ -473,15 +498,34 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
                         st{i}, M(i,jV), st{o}, M(o,jV)));
                 end
             end
-            % 4) VS3: states VS3 and -VS3 respond most among the 13 coil states,
-            %    VS3 negative and -VS3 positive at first (B(12,14) < 0 < B(13,14))
+            % 4) VS3: the circuit state VS3 (the VS3U current, VS3L = -VS3) responds
+            %    most among the 12 circuit states, negative at first (B(12,14) < 0)
             j3 = find(strcmp(gen,'VS3'));
-            [~, order] = sort(M(1:13,j3), 'descend');
-            testCase.verifyEqual(sort(order(1:2))', [12 13], sprintf( ...
-                'generator VS3: largest coil-state responses on %s and %s, expected VS3 and -VS3', ...
-                st{order(1)}, st{order(2)}));
+            [~, imax] = max(M(1:12,j3));
+            testCase.verifyEqual(st{imax}, 'VS3', sprintf( ...
+                'generator VS3: largest circuit-state response on %s, expected VS3', st{imax}));
             testCase.verifyLessThan(F(12,j3), 0, 'generator VS3: initial response of state VS3 is not negative');
-            testCase.verifyGreaterThan(F(13,j3), 0, 'generator VS3: initial response of state -VS3 is not positive');
+        end
+
+        function test_absolute_initial_state(testCase)
+            % linear_models/plasmaless_model (absolute coordinates, circuit states): the
+            % initial state built from coil currents that follow the circuits gives them
+            % back, with passive states 0; currents that violate the circuits are refused
+            model = configure_linear_model(fullfile(testCase.rootDir,'linear_models', ...
+                'plasmaless_model'), 0.01, testCase.pf_active);
+            testCase.verifyEqual(model.coordinates, 'absolute');
+            coil = @(s) strcmp(model.coil_names,s);
+            i0 = 1e3*(1:14)';
+            i0(coil('CS1L')) = i0(coil('CS1U'));        % series
+            i0(coil('VS3L')) = -i0(coil('VS3U'));       % antiseries
+            x0 = linear_initial_state(model, i0);
+            testCase.verifySize(x0, [model.n_states 1]);
+            testCase.verifyEqual(model.x_to_coil*x0, i0, 'AbsTol', 1e-12*max(abs(i0)));
+            testCase.verifyEqual(model.x_to_loop*x0, zeros(model.n_loops,1));
+            bad = i0; bad(coil('CS1L')) = bad(coil('CS1L')) + 100;
+            testCase.verifyError(@() linear_initial_state(model, bad), 'plasmaless:circuits');
+            bad = i0; bad(coil('VS3L')) = -bad(coil('VS3L'));
+            testCase.verifyError(@() linear_initial_state(model, bad), 'plasmaless:circuits');
         end
 
     end
@@ -527,7 +571,8 @@ classdef test_plasmaless_linear < matlab.unittest.TestCase
         end
 
         function pf_in = inputSlice(model, t, u)
-            % one-slice pf_active with coil voltages u at time t (coils by name)
+            % one-slice pf_active with voltages u at time t in coil{k}.voltage (for a
+            % linear model u(k) is power supply k; coils named as the model coils)
             pf_in = ids_init('pf_active');
             pf_in.ids_properties.homogeneous_time = 1;
             pf_in.time = t;

@@ -1,7 +1,8 @@
 function muscle_plasmaless_actor()
-% MUSCLE3 actor around the plasmaless coil+vessel model (imas_model/), a
-% drop-in replacement of NICE direct evolutive (nice_evo_rd) for controller
-% tests in PDS (workflow plasmaless_controller). Run with
+% MUSCLE3 actor around the linear plant models of linear_models/ (read by
+% imas_model/configure_linear_model.m), a drop-in replacement of NICE direct
+% evolutive (nice_evo_rd) for controller tests in PDS (workflows
+% plasmaless_controller, linear_plant_controller). Run with
 %   matlab -batch "pyenv('Version',<python with muscle3 0.10>,'ExecutionMode','InProcess'); ...
 %                  addpath(<repo>/muscle3); muscle_plasmaless_actor"
 % See muscle3/README.md for ports, settings, timing and assumptions.
@@ -11,34 +12,42 @@ function muscle_plasmaless_actor()
 %                              its message timestamp is the start time t0
 %          pf_active_f_init    multi-time pf_active (machine description +
 %                              scenario coil currents/voltages)
-%   S      pf_active_s         one-slice pf_active with the coil voltages
+%   S      pf_active_s         one-slice pf_active with the 14 power-supply
+%                              voltages, coil{k}.voltage = supply k
+%                              {CS3U CS2U CS1U CS1L CS2L CS3L PF1..PF5 VS1 PF6 VS3}
 %                              (from the controller, coil names absent)
 %   O_I    equilibrium_o_i     one-slice reference pass-through equilibrium
 %          pf_active_o_i       one-slice coil currents (model)
 %          pf_passive_o_i      one-slice passive loop currents (model)
 % Settings: dt, t_interval (must equal dt), t_end (mandatory); md_uri
 % (optional, default: data/md_dd4 of this repository); linear_model_dir
-% (optional, default '' = circuit model): directory of an external linear
-% model (linear_model.json + matrices, imas_model/configure_linear_model.m);
-% operating_point (optional, linear model only): 'descriptor' (default) or
-% 'f_init', which of the two sources wins for the operating point.
+% (mandatory): directory of a linear model (linear_model.json + matrices,
+% imas_model/configure_linear_model.m) built as NICE: the 14 power-supply
+% voltages in, the ITER circuits as states, the coil currents out
+% (linear_models/plasmaless_model is the plasma-free circuit model);
+% operating_point (optional): 'descriptor' (default) or 'f_init', which of the
+% two sources wins for the operating point.
 %
 % Linear model: its states, inputs and outputs are deviations from its
 % linearisation point. The run starts at t0 with x = 0 and the operating
 % point from two sources, the descriptor (operating_point) and the F_INIT
-% data at t0 (coil currents and voltages of the pf_active slice closest to
-% t0, observables found in the equilibrium slice closest to t0):
+% data at t0 (coil currents of the pf_active slice closest to t0, observables
+% found in the equilibrium slice closest to t0):
 %   'descriptor': descriptor values win, F_INIT fills what the descriptor
 %                 does not give. The absolute coil currents and Ip sent to
 %                 the controller start at the linearisation point, which
 %                 differs from the F_INIT scenario values: the controller
 %                 sees a step error at t0.
-%   'f_init':     F_INIT values win (currents, voltages and the observables
-%                 found there); descriptor values only for what F_INIT does
-%                 not have. The outputs start on the scenario.
-% A descriptor with coordinates 'absolute' (e.g. the circuit model exported as
-% matrices) has no operating point: the run starts from the F_INIT coil currents at t0
-% (passive states 0) and the setting operating_point is ignored.
+%   'f_init':     F_INIT values win (currents and the observables found
+%                 there); descriptor values only for what F_INIT does not
+%                 have. The outputs start on the scenario.
+% The operating-point power-supply voltages come from the descriptor only
+% (zero when absent): the F_INIT coil voltages are scenario coil voltages, not
+% power-supply voltages. The first step applies them (du = 0).
+% A descriptor with coordinates 'absolute' (e.g. linear_models/plasmaless_model) has
+% no operating point: the run starts from the F_INIT coil currents at t0, projected on
+% the circuit states (linear_initial_state), passive states 0, and the setting
+% operating_point is ignored.
 % Observables known by neither source stay unknown and are not sent. Each
 % step uses du = V - op.voltage, so the operating point is held until the
 % controller changes the voltages. equilibrium_o_i carries the known
@@ -50,7 +59,8 @@ function muscle_plasmaless_actor()
 % Timing mirrors nice_imas_evo_rd_muscle3 (NICE 3.0.0.dev446,
 % main_imas_evo_rd_muscle3.cc): t0 = timestamp of equilibrium_f_init (cc:146),
 % F_INIT pf_active sliced at t0 with the closest sample (cc:156); the first
-% step uses that slice; after every step the outputs at t are sent with
+% step uses the operating-point power-supply voltages (NICE uses the scenario
+% voltages of that slice); after every step the outputs at t are sent with
 % next_timestamp t+t_interval, or None when t+t_interval > t_end+1e-9, after
 % which the actor stops (cc:178-195); otherwise pf_active_s is received and
 % gives the voltages of the next step (cc:197).
@@ -92,8 +102,13 @@ t_end = double(instance.get_setting('t_end'));
 % default machine description: data/md_dd4 shipped in this repository
 md_uri = char(instance.get_setting('md_uri', pyargs('default', ['imas:hdf5?path=' ...
     fullfile(fileparts(fileparts(mfilename('fullpath'))),'data','md_dd4')])));
-% '' = circuit model from the machine description; otherwise an external linear model
+% folder of the linear model (mandatory)
 linear_model_dir = char(instance.get_setting('linear_model_dir', pyargs('default', '')));
+if isempty(linear_model_dir)
+    error('plasmaless_actor:settings', ['linear_model_dir is empty: set it to a model ', ...
+        'folder of linear_models/ (linear_models/plasmaless_model for the plasma-free ', ...
+        'circuit model).']);
+end
 % which source wins for the operating point of a linear model
 op_source = char(instance.get_setting('operating_point', pyargs('default', 'descriptor')));
 if ~any(strcmp(op_source, {'descriptor','f_init'}))
@@ -125,15 +140,11 @@ if t0 < eq_time(1) || t_end > eq_time(end)
         'F_INIT equilibrium time range [%.10g, %.10g].'], t0, t_end, eq_time(1), eq_time(end));
 end
 
-% machine description and model (the linear model only needs pf_active, for
-% the coil names and order)
+% machine description (the linear model only needs pf_active, for the coil names
+% and order)
 fprintf('muscle_plasmaless_actor: loading machine description from %s\n', md_uri);
 idx = imas_open(md_uri,40);
 pf_active_md = ids_get(idx,'pf_active');
-if isempty(linear_model_dir)
-    em_coupling = ids_get(idx,'em_coupling');
-    pf_passive_md = ids_get(idx,'pf_passive');
-end
 imas_close(idx);
 
 % The controller reads and writes the coils by index (KCURR_RZIp
@@ -150,63 +161,50 @@ end
 coil_names = model_coil_names(pf_active_md);
 
 pfa_t0 = closest_slice(pfa_init, t0, coil_names);
-if isempty(linear_model_dir)
-    % ASSUMPTION: the vessel (pf_passive loop) currents are zero at t0. The
-    % scenario data carried by the workflow has no passive-structure currents, so
-    % there is no source for them; this is a modelling assumption, not a default
-    % of the model (configure_plasmaless_model needs them explicitly).
-    pfp_t0 = ids_init('pf_passive');
-    pfp_t0.ids_properties.homogeneous_time = 1;
-    pfp_t0.time = t0;
-    pfp_t0.loop = ids_allocate('pf_passive','loop',numel(pf_passive_md.loop));
-    for ii = 1:numel(pf_passive_md.loop)
-        pfp_t0.loop{ii}.name = pf_passive_md.loop{ii}.name;
-        pfp_t0.loop{ii}.current = 0;
+% linear model: x = 0 (deviations), operating point from the descriptor and the
+% F_INIT data at t0 (setting operating_point says which wins)
+fprintf('muscle_plasmaless_actor: linear model from %s\n', linear_model_dir);
+[model, x] = configure_linear_model(linear_model_dir, dt, pf_active_md);
+if strcmp(model.coordinates,'absolute')
+    % absolute model (descriptor coordinates 'absolute'): zero operating point, the
+    % run starts from the F_INIT coil currents at t0 projected on the circuit states
+    % (error if they violate the circuits), passive states 0. ASSUMPTION: the
+    % scenario data carried by the workflow has no passive-structure currents.
+    i0 = zeros(model.n_coils,1);
+    for ii = 1:model.n_coils
+        i0(ii) = check_value(pfa_t0.coil{ii}.current.data, ...
+            ['pf_active coil ' model.coil_names{ii} ' current'], t0);
     end
-    [model, x] = configure_plasmaless_model(em_coupling, pf_active_md, pf_passive_md, dt, pfa_t0, pfp_t0);
-    eq_comment = '';
+    x = linear_initial_state(model, i0);
+    fprintf(['muscle_plasmaless_actor: absolute linear model, initial state from the ', ...
+        'F_INIT coil currents at t0 = %.10g (setting operating_point ignored)\n'], t0);
 else
-    % linear model: x = 0 (deviations), operating point from the descriptor
-    % and the F_INIT data at t0 (setting operating_point says which wins)
-    fprintf('muscle_plasmaless_actor: linear model from %s\n', linear_model_dir);
-    [model, x] = configure_linear_model(linear_model_dir, dt, pf_active_md);
-    if strcmp(model.coordinates,'absolute')
-        % absolute model (descriptor coordinates 'absolute'): zero operating point, the
-        % run starts from the F_INIT coil currents at t0 (one state per coil, checked by
-        % configure_linear_model), passive states 0 as in the circuit model
-        i0 = zeros(model.n_coils,1);
-        for ii = 1:model.n_coils
-            i0(ii) = check_value(pfa_t0.coil{ii}.current.data, ...
-                ['pf_active coil ' model.coil_names{ii} ' current'], t0);
-        end
-        x = model.x_to_coil'*i0;
-        fprintf(['muscle_plasmaless_actor: absolute linear model, initial state from the ', ...
-            'F_INIT coil currents at t0 = %.10g (setting operating_point ignored)\n'], t0);
-    else
-        model = linear_operating_point(model, pfa_t0, eq_ref, eq_time, t0, op_source);
-    end
-    eq_comment = sprintf(['plasmaless linear model (%s): %s from the model, ', ...
-        'boundary geometric axis = reference pass-through'], model.source.description, ...
-        strjoin(model.y_names(model.op.y_known),'/'));
+    model = linear_operating_point(model, pfa_t0, eq_ref, eq_time, t0, op_source);
 end
+eq_comment = sprintf(['plasmaless linear model (%s): %s from the model, ', ...
+    'boundary geometric axis = reference pass-through'], model.source.description, ...
+    strjoin(model.y_names(model.op.y_known),'/'));
 fprintf('muscle_plasmaless_actor: %s model built, %d states, %d coils, %d passive loops, %d observables\n', ...
     model.kind, model.n_states, model.n_coils, model.n_loops, numel(model.y_names));
 
 % time loop
-pfa_in = pfa_t0;           % first step: scenario voltages at t0 (as NICE)
+pfa_in = pfa_t0;
+% first step: the operating-point power-supply voltages (du = 0); the F_INIT coil
+% voltages are scenario coil voltages, not power-supply voltages
+for ii = 1:numel(model.op.voltage)
+    pfa_in.coil{ii}.voltage.data = model.op.voltage(ii);
+end
 t = t0;
 n_sent = 0;
 while true
     [pfa_out, pfp_out, x, y_out] = plasmaless_step_ids(model, pfa_in, x);
     t = pfa_out.time;      % = t + dt
     eq_out = reference_equilibrium(t, eq_time, ip_ref, r_ref, z_ref);
-    if strcmp(model.kind,'linear')
-        % known observables of the model (absolute values): a known Ip overrides
-        % the pass-through ip; magnetic axis, X-point and gaps are added;
-        % boundary.geometric_axis stays the reference (the model does not give it)
-        eq_out = plasmaless_observables_to_equilibrium(eq_out, y_out);
-        eq_out.ids_properties.comment = eq_comment;
-    end
+    % known observables of the model (absolute values): a known Ip overrides the
+    % pass-through ip; magnetic axis, X-point and gaps are added;
+    % boundary.geometric_axis stays the reference (the model does not give it)
+    eq_out = plasmaless_observables_to_equilibrium(eq_out, y_out);
+    eq_out.ids_properties.comment = eq_comment;
 
     more_after_this = t + t_interval <= t_end + 1e-9;   % as cc:184
     if more_after_this
@@ -312,12 +310,14 @@ end
 
 function model = linear_operating_point(model, pfa_t0, eq_ref, eq_time, t0, op_source)
 % operating point of a linear model: descriptor entries (model.op, *_given /
-% y_known flags) and the F_INIT data at t0 (coil currents and voltages of the
-% pf_active slice pfa_t0 in model coil order, observables of the equilibrium
-% slice closest to t0). op_source 'descriptor': descriptor entries win, F_INIT
-% fills the rest; 'f_init': F_INIT values win, descriptor entries fill the rest
+% y_known flags) and the F_INIT data at t0 (coil currents of the pf_active slice
+% pfa_t0 in model coil order, observables of the equilibrium slice closest to t0).
+% op_source 'descriptor': descriptor entries win, F_INIT fills the rest; 'f_init':
+% F_INIT values win, descriptor entries fill the rest. The power-supply voltages
+% come from the descriptor only (zero when absent): the F_INIT coil voltages are
+% scenario coil voltages, not power-supply voltages.
 f_init_wins = strcmp(op_source,'f_init');
-n_cur = 0; n_volt = 0;    % coil entries taken from F_INIT
+n_cur = 0;    % coil currents taken from F_INIT
 for ii = 1:model.n_coils
     c = pfa_t0.coil{ii};
     if f_init_wins || ~model.op.coil_current_given(ii)
@@ -325,12 +325,8 @@ for ii = 1:model.n_coils
             ['pf_active coil ' model.coil_names{ii} ' current'], t0);
         n_cur = n_cur + 1;
     end
-    if f_init_wins || ~model.op.voltage_given(ii)
-        model.op.voltage(ii) = check_value(c.voltage.data, ...
-            ['pf_active coil ' model.coil_names{ii} ' voltage'], t0);
-        n_volt = n_volt + 1;
-    end
 end
+n_volt = nnz(model.op.voltage_given);    % power-supply voltages from the descriptor
 [~, k] = min(abs(eq_time - t0));
 [vals, known] = plasmaless_observables_from_equilibrium(eq_ref.time_slice{k}, model.y_names);
 if f_init_wins
@@ -341,9 +337,10 @@ end
 model.op.y(from_eq) = vals(from_eq);
 model.op.y_known = model.op.y_known | known;
 fprintf(['muscle_plasmaless_actor: operating point at t0 = %.10g (setting operating_point = %s): ', ...
-    '%d/%d coil currents/voltages from F_INIT pf_active, the others from the descriptor; ', ...
-    'observables from the F_INIT equilibrium slice t = %.10g: {%s}; sent as absolute values: {%s}; ', ...
-    'not sent (unknown): {%s}\n'], t0, op_source, n_cur, n_volt, eq_time(k), ...
+    '%d coil currents from F_INIT pf_active, the others from the descriptor; %d power-supply ', ...
+    'voltages from the descriptor, the others 0; observables from the F_INIT equilibrium slice ', ...
+    't = %.10g: {%s}; sent as absolute values: {%s}; not sent (unknown): {%s}\n'], ...
+    t0, op_source, n_cur, n_volt, eq_time(k), ...
     strjoin(model.y_names(from_eq),','), strjoin(model.y_names(model.op.y_known),','), ...
     strjoin(model.y_names(~model.op.y_known),','));
 end

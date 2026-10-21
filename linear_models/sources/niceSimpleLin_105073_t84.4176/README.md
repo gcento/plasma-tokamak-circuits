@@ -3,6 +3,13 @@
 Linearised plasma + circuit model delivered by the model provider (NICE linearisation),
 used by this repository as an external linear model in place of the circuit model.
 
+**Raw source (2026-10-21).** This folder holds the model as delivered: 13 coil states, with
+VS3 and -VS3 as two separate states. The plant does not load it (`plasmaless:circuits`).
+Its circuit form `linear_models/niceSimpleLin_105073_t84.4176` (12 circuit states, same
+inputs, outputs, convention and operating point) is written by
+`linear_models/utils/transform_nice_lin_model.m`. The sections below that mention
+`input_map` describe the earlier coil-voltage interface.
+
 **Pulse correction (2026-10-14, confirmed by the user).** The provider's e-mail and the
 original directory name said pulse 105078 (recorded in `provider_note` of the descriptor);
 the data match pulse **105073** at t = 84.4176 s: the DINA 105073
@@ -19,15 +26,15 @@ files and `linModOrder.txt` unchanged).
 
 | File | Content |
 |---|---|
-| `linModSimpleA.npy`, `.txt` | A (17 x 17), continuous-time state matrix, dI/dt = A I + B U |
-| `linModSimpleB.npy`, `.txt` | B (17 x 14), input matrix (14 generator voltages) |
-| `linModSimpleC.npy`, `.txt` | C (9 x 17), output matrix, Y = C I |
+| `linModSimpleA.npy` | A (17 x 17), continuous-time state matrix, dI/dt = A I + B U |
+| `linModSimpleB.npy` | B (17 x 14), input matrix (14 generator voltages) |
+| `linModSimpleC.npy` | C (9 x 17), output matrix, Y = C I |
 | `linModOrder.txt` | output order: rmag, zmag, rX, zX, Ip, gaps (n_gaps = 3), Dist2ndSep |
 | `linear_model.json` | descriptor read by `imas_model/configure_linear_model.m` (states, inputs, input-to-coil map, coil-to-state mapping, outputs, sign convention, operating point, notes) |
 
-The `.txt` files hold the same matrices with 6 significant digits; the `.npy` files are
-the ones used. The matrix files are untouched (provider's frame); the convention block of
-the descriptor tells the wrapper how to read them.
+The provider's `.txt` copies (6 significant digits) were not kept; the `.npy` files hold the
+full-precision matrices. The matrix files are untouched (provider's frame); the convention
+block of the descriptor tells the wrapper how to read them.
 
 ## Sign convention (derived, 2026-10-14)
 
