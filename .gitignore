@@ -1,9 +1,6 @@
-# autosave files
 *.asv
-# simulink cache
 *.slxc
-# swp files
 *.swp
-# generated results (run_plasmaless_imas/model, MUSCLE3 standalone test)
-plasmaless_*_results.mat
-plasmaless_*_results.png
+__pycache__/
+.claude/
+.mcp.json

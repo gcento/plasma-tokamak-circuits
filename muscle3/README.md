@@ -1,11 +1,11 @@
 # MUSCLE3 actor: linear plant models
 
-`muscle_plasmaless_actor.m` wraps the linear plant models of `../linear_models/` (IMAS
-interface in `../imas_model/`) as a MUSCLE3 (libmuscle 0.10, Python in-process from MATLAB) actor. It stands in for NICE
-direct evolutive (`nice_evo_rd`) in controller tests. In IMAS-PDS it is the program
-`plasmaless` (`workflows/lib/local_programs.ymmsl`), used by the workflows
-`plasmaless_controller` and `linear_plant_controller`; PDS installs this repository into
-`local_installs/plasmaless-tokamak-circuits` with `setup_files/setup_plasmaless.sh`.
+`muscle_linear_model_actor.m` runs one model of `../linear_models/` as a MUSCLE3 actor
+(libmuscle 0.10, Python in-process from MATLAB) with the plant code of `../plant/`, in
+place of NICE direct evolutive (`nice_evo_rd`) in controller tests. In IMAS-PDS it is the
+program `linear_model` (`workflows/lib/local_programs.ymmsl`) of the workflow
+`linear_plant_controller`, run from `local_installs/plasmaless-tokamak-circuits`
+(installed by `setup_files/setup_plasmaless.sh`).
 
 ## Ports
 
@@ -13,171 +13,95 @@ direct evolutive (`nice_evo_rd`) in controller tests. In IMAS-PDS it is the prog
 |---|---|---|
 | F_INIT | `equilibrium_f_init` | multi-time equilibrium (reference trajectory); its message timestamp is the start time t0 |
 | F_INIT | `pf_active_f_init` | multi-time pf_active, `homogeneous_time` 1, coil currents and voltages |
-| S | `pf_active_s` | one-slice pf_active with the 14 power-supply voltages at t, `coil{k}.voltage` = supply k in the order `CS3U CS2U CS1U CS1L CS2L CS3L PF1 .. PF5 VS1 PF6 VS3` (as the PDS controller writes them; coil names not needed) |
-| O_I | `equilibrium_o_i` | one-slice equilibrium at t (see below) |
+| S | `pf_active_s` | one-slice pf_active with the 14 power-supply voltages at t, `coil{k}.voltage` = supply k in the order `CS3U CS2U CS1U CS1L CS2L CS3L PF1 .. PF5 VS1 PF6 VS3` (coil names not needed) |
+| O_I | `equilibrium_o_i` | one-slice equilibrium at t (below) |
 | O_I | `pf_active_o_i` | one-slice coil currents at t (and the voltages applied over the step) |
-| O_I | `pf_passive_o_i` | one-slice passive loop (vessel) currents at t |
+| O_I | `pf_passive_o_i` | one-slice passive currents at t, one loop per passive state of the model |
 
 Flag `KEEPS_NO_STATE_FOR_NEXT_USE`.
 
 ## Settings
 
-- `dt` (mandatory): model time step [s] (discretisation of the model).
-- `t_interval` (mandatory): exchange period [s]; must equal `dt`.
-- `t_end` (mandatory): last output time [s]; t0 < `t_end` <= last time of the F_INIT
-  equilibrium.
-- `md_uri` (optional): IMAS URI of the DD4 machine description (`em_coupling`,
-  `pf_active`, `pf_passive`). Default: `data/md_dd4` of this repository (derived from
-  the actor file location), made with `tools/convert_md_dd3_to_dd4.py`.
-- `linear_model_dir` (mandatory): absolute path of a model folder of `linear_models/`
-  (`linear_model.json` + matrices, `imas_model/configure_linear_model.m`, repository
-  README "External linear model"). Every model is built as NICE: the 14 power-supply
-  voltages in, the ITER circuits as states, the coil currents out
-  (`linear_models/README.md`). `linear_models/plasmaless_model` is the plasma-free
-  circuit model; `''` is the error `plasmaless_actor:settings`. The machine description
-  is still read for the coil names and order.
-- `operating_point` (optional, linear model only, default `descriptor`): which source
-  wins for the operating point, `descriptor` or `f_init` (see below); any other value
-  is the error `plasmaless_actor:settings`.
+| Setting | | Content |
+|---|---|---|
+| `dt` | mandatory | model time step [s] (zero-order hold) |
+| `t_interval` | mandatory | exchange period [s], must equal `dt` |
+| `t_end` | mandatory | last output time [s], t0 < `t_end` <= last time of the F_INIT equilibrium |
+| `linear_model_dir` | mandatory | absolute path of a model folder of `linear_models/` |
+| `md_uri` | optional | IMAS URI of the DD4 machine description (coil names and order); default `data/md_dd4` |
+| `operating_point` | optional | `descriptor` (default) or `f_init`: which source wins for the operating point |
 
-## External linear model: operating point
+A wrong value stops the actor with `linear_model_actor:settings`.
 
-The linear model's states, inputs and outputs are deviations from its linearisation
-point. The actor starts at t0 with x = 0 and builds the operating point from two
-sources: the descriptor (`operating_point`: coil currents, power-supply voltages, outputs)
-and the F_INIT data at t0 (`op.coil_current` = currents of the F_INIT pf_active slice
-closest to t0 in model coil order, `op.y` = the observables found in the F_INIT
-equilibrium slice closest to t0, `plasmaless_observables_from_equilibrium`). The
-power-supply voltages `op.voltage` come from the descriptor only (zero when absent): the
-F_INIT coil voltages are scenario coil voltages, not power-supply voltages.
-Setting `operating_point`:
+## Operating point and initial state
 
-- `descriptor` (default): descriptor values win, F_INIT fills what the descriptor does
-  not give. The absolute coil currents and Ip sent to the controller then start at the
-  linearisation point, which differs from the F_INIT scenario values: the controller sees
-  a step error at t0 (for the received model, Ip +15.06 MA against the scenario's).
-- `f_init`: the coil currents and the observables found in the F_INIT data win;
-  descriptor values are used only for what F_INIT does not have. The outputs start on
-  the scenario, and the model's deviations are added to it.
+A deviation model starts at t0 with x = 0 and takes its operating point from two sources:
+the descriptor (`operating_point` of `linear_model.json`) and the F_INIT data at t0 (coil
+currents of the pf_active sample closest to t0, outputs of the equilibrium slice closest
+to t0).
+- `descriptor`: the descriptor wins, F_INIT fills the rest. The coil currents and Ip start
+  at the linearisation point, so the controller sees a step error at t0.
+- `f_init`: F_INIT wins, and the outputs start on the scenario.
 
-A descriptor with `coordinates: absolute` (absolute states, e.g.
-`linear_models/plasmaless_model`) has no operating point. The actor starts it from the
-coil currents of the F_INIT pf_active slice closest to t0, projected on the circuit states
-(`imas_model/linear_initial_state.m`; error `plasmaless:circuits` when CS1U and CS1L, or
-VS3U and -VS3L, differ by more than 1e-6 of the largest current), with passive states 0.
-It ignores the setting `operating_point` and prints one line saying so.
+The power-supply voltages come from the descriptor only (zero when absent). Each step uses
+du = V − op.voltage, so the operating point is held until the controller changes the
+voltages.
 
-An observable known by neither source stays unknown and is not sent. Each step uses
-du = V - `op.voltage`, so the operating point is held until the controller changes the
-voltages; the actor prints one line naming the setting, how many coil entries came from
-F_INIT, the observables taken from the F_INIT equilibrium, those sent as absolute
-values and those not sent.
-Outputs: `pf_active_o_i` = `op.coil_current` + deviations; `pf_passive_o_i` has as many
-loops as the model has passive states (4 for the received model, `PS_1, PS_2, VV_1,
-VV_2`), named as in the
-descriptor; `equilibrium_o_i` = the reference pass-through plus the known observables
-(`plasmaless_observables_to_equilibrium`: a known Ip overrides the pass-through ip;
-magnetic axis, X-point (`contour_tree.node{1}`, `critical_type` 1) and gaps are added;
-`boundary.geometric_axis` stays the reference pass-through because the model does not
-give it; `Dist2ndSep` has no DD4 field and is not sent), with an `ids_properties.comment`
-naming the model and the observables it provides.
+An absolute model (`plasmaless_model`) has no operating point. It starts from the F_INIT
+coil currents at t0 projected on the circuit states (`plant/linear_initial_state.m`), with
+passive currents 0, and ignores `operating_point`. Currents with CS1U ≠ CS1L or
+VS3U ≠ −VS3L (beyond 1e-6 of the largest current) stop it with `linear_model:circuits`.
+
+Outputs:
+- `pf_active_o_i`: op.coil_current + deviations;
+- `pf_passive_o_i`: the passive states, named as in the descriptor;
+- `equilibrium_o_i`: the F_INIT `ip` and `boundary.geometric_axis` interpolated at t
+  (reference pass-through), plus the outputs known to the model
+  (`plant/plant_observables_to_equilibrium.m`): Ip replaces `ip`; magnetic axis,
+  X-point and gaps are added. An output known by neither source is not sent.
+
+Log of the instance (`stdout.txt`): one line for the model (folder, states, t0, t_end,
+dt), one for the operating point (source, coil currents from F_INIT, outputs sent and not
+sent), one at the end (number of exchanges). One more line appears only if the F_INIT
+pf_active has no sample at t0.
 
 ## Timing
 
-As `nice_imas_evo_rd_muscle3` (NICE 3.0.0.dev446, `main_imas_evo_rd_muscle3.cc`):
-t0 = timestamp of `equilibrium_f_init`; the F_INIT pf_active is sliced at t0 (closest
-sample). The first step applies the operating-point power-supply voltages (du = 0; NICE
-applies the scenario voltages of that slice); each step gives the outputs at
-t = t_prev + dt, sent on the three O_I ports with timestamp t and next_timestamp t + dt,
-or None when t + dt > t_end + 1e-9 (then the actor stops). Otherwise the actor receives
-`pf_active_s` (expected at timestamp t) and uses its voltages for the next step. The stop
-decision comes from `t_end` only: the PDS controller always sends next_timestamp None.
+As `nice_imas_evo_rd_muscle3` (NICE 3.0.0.dev446):
+- t0 = timestamp of `equilibrium_f_init`.
+- The first step applies the operating-point voltages (du = 0).
+- Each step sends the outputs at t = t_prev + dt on the three O_I ports, with
+  next_timestamp t + dt, or None when t + dt > t_end + 1e-9; then the actor stops.
+- Otherwise the actor receives `pf_active_s`, which must answer the measurement just sent
+  (timestamp t within 1e-6 s, else `linear_model_actor:time`), and applies its voltages
+  over the next step.
 
 ## Assumptions
 
-- Vessel (pf_passive loop) currents are zero at t0: the scenario data has none.
-- The coils of the F_INIT pf_active and of the machine description are the same coils,
-  in the same order (the controller works by index): the short names (CS3U ... PF6,
-  VS3U, VS3L) must match exactly, otherwise the actor fails.
-- The coil resistances come from the model machine description; the resistances sent
-  by the controller are ignored.
-- `equilibrium_o_i` has no plasma: `global_quantities.ip` and
-  `boundary.geometric_axis.r/z` are the F_INIT equilibrium values linearly interpolated
-  at t (so the controller's Ip/R/Z errors are zero), `code.output_flag` = 0, and
-  `ids_properties.comment` says so.
-- After the actor returns, the PDS launcher ends MATLAB with `os._exit(0)`: MATLAB
-  R2025b with IMAS-MATLAB 5.6.0 segfaults on exit after reading an `imas:hdf5` entry.
-
-## Test
-
-Tested with a dummy controller in place of the PCS one (shot 105073 F_INIT, t0 = 84.3176 s,
-with the former VSU/VSL name mapping,
-20 steps): 20 exchanges, first output at t0 + 0.01, last with next_timestamp None, and
-coil currents identical to direct `plasmaless_step_ids` calls.
-
-Earlier test (historical, when the PDS workflow still ran `waveform_editor` inside the
-workflow) for shot 105084: source and waveform_editor, dummy controller,
-t0 = 136.2276 s, dt 0.005, t_end = t0 + 0.02: 4 exchanges; the F_INIT equilibrium and
-pf_active received by the controller equal the NICE inverse output (`nice_out`) exactly.
-
-In the current PDS `plasmaless_controller` workflow (IMAS-PDS,
-`workflows/plasmaless_controller/`), the Waveform-Editor runs once at case creation
-(`preprocess.sh`, writes `<case>/preprocess/initial_state` from `nice_out`); `source`
-reads that entry and sends the F_INIT equilibrium and pf_active directly to
-`magnetic_controller` and `plasmaless`, and a `recorder_plasmaless` component
-(`visualization/plasmaless_currents.py`) shows live coil/passive-current figures in
-m3dash. Slurm run with the PCS controller, shot 105084, t_end 160
-(`cases/runs/plasmaless_controller_105084_20261008_200304`): 4754 exchanges, finished
-without error.
-
-Slurm run with the PCS controller and the external linear model (2026-10-14), shot 105073,
-case `plasmaless_controller_105073` (override `cases/overrides/plasmaless_controller_105073.ymmsl`:
-`source.t_min` 81.0 / `t_max` 100.0 on the inverse `nice_out` of
-`metis_nice_inverse_from_dina_105073_20261014_102619`, t0 = 81.4576 s, `plasmaless.t_end`
-83.4576, dt = `t_interval` 0.005, `plasmaless.linear_model_dir` =
-`linearModelSimple_105073_t84.417598`, `plasmaless.operating_point` descriptor; `PLASMALESS_REPO`
-exported at submission because the PDS local install predates the linear-model code), run dir
-`cases/runs/plasmaless_controller_105073_20261014_103330`: finished without error, 6 instances
-exit 0, 400 exchanges (81.4626 .. 83.4576 s), 17 states / 14 coils / 4 passive loops / 9
-observables, operating point from the descriptor (0/0 coil entries from F_INIT), one expected
-`plasmaless:inputUndriven` warning (VS1). Integration test only; the physics (CS/PF commands at
-the clip from the first step, VS3 currents to -100 kA, rmag +16 cm) is discussed in
-`../pds_integration.txt` 4.7.
+- The F_INIT pf_active and the machine description list the same coils in the same order,
+  because the controller works by index (`linear_model_actor:coilOrder` otherwise).
+- The passive currents are zero at t0: the scenario data has none.
+- After the actor returns, the launcher ends MATLAB with `os._exit(0)`: MATLAB R2025b with
+  IMAS-MATLAB 5.6.0 segfaults on exit after reading an `imas:hdf5` entry.
 
 ## Standalone test
 
-`plasmaless_standalone.ymmsl` couples the actor to `voltage_driver.py` only (no PDS, no
-PCS controller): the driver sends a no-plasma F_INIT equilibrium and a cold-start
-pf_active (machine-description coils, currents 0), then answers every output with the
-voltage pulse train of `timeseries_plasmaless_model.m`, as `run_plasmaless_imas.m`
-applies it (u(t_k) over [t_k, t_k+dt]); its 14 values go to the 14 power supplies
-(`coil{k}.voltage` = supply k). Settings: `dt` = `t_interval` = 0.01,
-`t_end` = 28; the run script adds `driver.md_uri` and `driver.results_file` with absolute
-repository paths (`paths.ymmsl` in the run directory); the actor uses its `md_uri`
-default. Run (2 cores, ~3 min):
+`actor_standalone.ymmsl` couples the actor to `voltage_driver.py` only (no PDS, no
+controller). The driver applies a waveform on one power supply, the others at zero, with
+the sampling of `utils/supply_sequence_response.m`. F_INIT is all zero and the actor runs
+with `operating_point: f_init`, so every output is a deviation from the operating point of
+the model, as in MATLAB.
 
-    ./run_plasmaless_muscle3.sh [model dir]
+    srun --partition=all_debug --time=00:20:00 --cpus-per-task=2 --mem=8G \
+        muscle3/run_actor_standalone.sh [model_dir] [key=value ...]
 
-Without argument the actor runs `linear_models/plasmaless_model` (the plasma-free
-circuit model, started from the driver's cold-start currents 0); a model directory as
-first argument selects another model. The script sets `plasmaless.linear_model_dir`.
-Run directory (MUSCLE3 logs only, printed at the end):
-`/scratch/users/$USER/plasmaless/m3_standalone_<date>`. The results file
-`plasmaless_muscle3_linear_results.mat` (repository root, ignored by git) has the
-`run_plasmaless_imas.m` layout (`time`, `Ia`, `Ie`, `Y`, `coil_names`, `loop_names`,
-`y_names`; `Y` holds the observables read back from `equilibrium_in`, NaN where absent).
-With the default `operating_point: descriptor`
-and the received model (`linear_models/niceSimpleLin_105073_t84.4176`), the operating point is the descriptor's (coil currents of the
-linearisation point, voltages 0, rmag/zmag/Ip known) and the saved `Ia` and the
-`rmag`/`zmag`/`Ip` columns of `Y` are absolute values (operating point + deviation), the
-same as `run_plasmaless_imas.m` with dt 0.01 (except the first row, t0, which the driver
-fills with its own cold-start 0 and F_INIT ip 0); the driver's cold-start pf_active
-(currents 0, pulse-train voltages at t0) and F_INIT equilibrium (ip 0) are not used
-because the descriptor gives everything they carry. With `operating_point: f_init`
-(uncomment it in `plasmaless_standalone.ymmsl` or add it to `paths.ymmsl`) the
-operating point becomes the driver's: currents 0, `op.voltage` = u(t0) (10 V on CS3U, so
-the first pulse is seen as 0 V and the later ones as -10 V), Ip known as 0, rmag/zmag
-from the descriptor. To plot it with `plot_plasmaless_model.m`, load it in
-MATLAB from the repository root and build the variables that script uses:
-`load('plasmaless_muscle3_linear_results.mat'); out.simout = timeseries([Ia Ie], time);`
-`tstart = time(1); tend = time(end); TS = timeseries_plasmaless_model(tstart,tend,time(2)-time(1)); plot_plasmaless_model`.
+- `model_dir`: a model folder (default `linear_models/plasmaless_model`).
+- Keys: `channel`, `waveform` (`step`, `pulse`, `bipolar`), `amplitude` [V], `t_on` [s]
+  (>= dt), `width` [s], `t_end` [s], `dt` [s]. Defaults in `actor_standalone.ymmsl`:
+  PF2, step, 10 V, t_on 0.01 s, width 0.1 s, t_end 0.5 s, dt 1 ms.
+- Results: `/scratch/users/$USER/linear_model/m3_<date>/channel_response.mat`, next to the
+  MUSCLE3 logs.
+
+To check the actor, run `utils/run_supply_sequence.m` with the same model, that supply and
+the same waveform, and set `muscle3_results` to that file. The MUSCLE3 curves (dashed) must
+lie on the MATLAB ones, and the console line gives their largest relative difference.

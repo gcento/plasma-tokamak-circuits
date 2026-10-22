@@ -1,0 +1,76 @@
+# Standalone MUSCLE3 test of the linear-model actor (no PDS, no PCS controller):
+# voltage_driver.py applies a waveform on one power supply through the actor, the
+# test of utils/run_supply_sequence.m with one supply, through MUSCLE3.
+# Run it with run_actor_standalone.sh: it sets LINEAR_MODEL_REPO to this repository and
+# adds a settings file in the run directory (settings.ymmsl) with the absolute paths
+# (driver.md_uri, driver.results_file, driver.model_dir, plant.linear_model_dir)
+# and the key=value overrides of its command line.
+ymmsl_version: v0.2
+
+programs:
+  voltage_driver:
+    script: |
+      #!/bin/bash
+      repo="${LINEAR_MODEL_REPO:?not set: run run_actor_standalone.sh}"
+      module purge
+      module load IMAS-MUSCLE3/1.0.0-intel-2025b-pds
+      exec python -u "$repo/muscle3/voltage_driver.py"
+
+  # same commands as the PDS program linear_model (IMAS-PDS
+  # workflows/lib/local_programs.ymmsl): PCS module for its muscle3 venv,
+  # os._exit(0) because MATLAB R2025b + IMAS-MATLAB 5.6.0 segfaults at exit
+  # after reading an imas:hdf5 entry
+  linear_model:
+    script: |
+      #!/bin/bash
+      repo="${LINEAR_MODEL_REPO:?not set: run run_actor_standalone.sh}"
+      module purge
+      module load PCS/2026.08-pds
+      module load IMAS-MATLAB/5.6.0-intel-2025b-DD-4.1.1
+      unset PYTHONPATH
+      exec matlab -singleCompThread -batch "pyenv('Version','$EBROOTPCS/muscle3_venv/bin/python','ExecutionMode','InProcess');addpath('$repo/muscle3');muscle_linear_model_actor;pyrun('import os; os._exit(0)');"
+
+models:
+  actor_standalone:
+    description: linear-model actor driven by a waveform on one power supply
+    components:
+      driver:
+        description: sends F_INIT (all zero) and the voltages, saves the responses
+        implementation: voltage_driver
+        ports:
+          o_i: [equilibrium_out, pf_active_out, voltages_out]
+          s: [equilibrium_in, pf_active_in, pf_passive_in]
+      plant:
+        description: linear-model actor with one model of linear_models/ (muscle_linear_model_actor.m)
+        implementation: linear_model
+        ports:
+          f_init: [equilibrium_f_init, pf_active_f_init]
+          s: [pf_active_s]
+          o_i: [equilibrium_o_i, pf_active_o_i, pf_passive_o_i]
+    conduits:
+      driver.equilibrium_out: plant.equilibrium_f_init
+      driver.pf_active_out: plant.pf_active_f_init
+      plant.equilibrium_o_i: driver.equilibrium_in
+      plant.pf_active_o_i: driver.pf_active_in
+      plant.pf_passive_o_i: driver.pf_passive_in
+      driver.voltages_out: plant.pf_active_s
+
+settings:
+  # shared by the driver and the actor
+  dt: 0.001
+  t_interval: 0.001     # must equal dt
+  t_end: 0.5
+  # F_INIT is all zero and the operating point comes from it: every output is a
+  # deviation from the operating point of the model, as in utils/supply_sequence_response.m
+  plant.operating_point: f_init
+  # waveform on one power supply (voltage_driver.py); run_actor_standalone.sh
+  # overrides them with key=value arguments
+  driver.channel: PF2
+  driver.waveform: step       # step | pulse | bipolar
+  driver.amplitude: 10.0      # [V]
+  driver.t_on: 0.01           # [s], >= dt
+  driver.width: 0.1           # [s] pulse/bipolar duration
+
+resources:
+  actor_standalone.driver: {threads: 1}
+  actor_standalone.plant: {threads: 1}
